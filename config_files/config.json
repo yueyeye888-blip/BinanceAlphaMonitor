@@ -1,0 +1,13 @@
+{
+  "webui_port": 5002,
+  "check_interval": 300,
+  "notify_method": "telegram",
+  "notify_targets": [
+    {
+      "name": "NTX Community",
+      "bot_token": "8331180504:AAFU-JyITKlfH7mvqrz5tspcvS2VTseW0yI",
+      "chat_id": "-1002436131413",
+      "enabled": true
+    }
+  ]
+}
