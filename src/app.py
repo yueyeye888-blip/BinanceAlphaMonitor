@@ -206,6 +206,7 @@ def monitor_loop():
     
     # 加载上次状态
     monitor_state = load_state()
+    is_first_run = not monitor_state.get('tokens')  # 判断是否首次运行
     
     while True:
         try:
@@ -227,21 +228,26 @@ def monitor_loop():
             new_ids = current_ids - previous_ids
             
             if new_ids:
-                logger.info(f"发现 {len(new_ids)} 个新币!")
-                
-                # 找出新币详情并推送
-                for token in current_tokens:
-                    if token.get('alphaId') in new_ids:
-                        logger.info(f"新币: {token.get('symbol')} ({token.get('name')})")
-                        notify_new_token(token)
+                if is_first_run:
+                    logger.info(f"首次运行: 发现 {len(current_ids)} 个代币,跳过推送")
+                    is_first_run = False
+                else:
+                    logger.info(f"🚀 发现 {len(new_ids)} 个新币!")
+                    
+                    # 找出新币详情并推送
+                    for token in current_tokens:
+                        if token.get('alphaId') in new_ids:
+                            logger.info(f"新币: {token.get('symbol')} ({token.get('name')})")
+                            notify_new_token(token)
             else:
-                logger.info("没有新币上线")
+                logger.info("✓ 没有新币上线")
             
             # 更新状态
             monitor_state = {
                 "last_check": datetime.now(timezone.utc).isoformat(),
                 "tokens": current_tokens[:100],  # 只保存最新100个
-                "token_count": len(current_tokens)
+                "token_count": len(current_tokens),
+                "new_count": len(new_ids) if not is_first_run else 0
             }
             save_state(monitor_state)
             
@@ -271,21 +277,27 @@ def index():
     tokens = monitor_state.get('tokens', [])[:20]  # 显示最新20个
     last_check = monitor_state.get('last_check', '')
     token_count = monitor_state.get('token_count', 0)
+    new_count = monitor_state.get('new_count', 0)
     
     # 格式化时间
     check_time = "从未检查"
     if last_check:
         try:
             dt = datetime.fromisoformat(last_check.replace('Z', '+00:00'))
-            check_time = dt.strftime('%Y-%m-%d %H:%M:%S')
+            check_time = dt.strftime('%m-%d %H:%M')
         except:
             pass
+    
+    # 配置信息
+    cfg = load_config()
+    interval_min = cfg.get('check_interval', 300) // 60
     
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>NTX Binance Alpha Monitor</title>
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -311,13 +323,17 @@ def index():
                 font-size: 32px;
                 margin-bottom: 10px;
             }}
+            .subtitle {{
+                color: #666;
+                margin-bottom: 20px;
+            }}
             .stats {{
-                display: flex;
-                gap: 20px;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
                 margin-top: 20px;
             }}
             .stat-card {{
-                flex: 1;
                 background: linear-gradient(135deg, #667eea, #764ba2);
                 color: white;
                 padding: 20px;
@@ -347,6 +363,7 @@ def index():
             }}
             .token-card:hover {{
                 transform: translateY(-4px);
+                box-shadow: 0 8px 24px rgba(0,0,0,0.15);
             }}
             .token-symbol {{
                 font-size: 24px;
@@ -361,7 +378,10 @@ def index():
             .token-info {{
                 font-size: 13px;
                 color: #888;
-                line-height: 1.6;
+                line-height: 1.8;
+            }}
+            .token-info div {{
+                padding: 2px 0;
             }}
             .btn-manage {{
                 display: inline-block;
@@ -371,14 +391,30 @@ def index():
                 border-radius: 8px;
                 text-decoration: none;
                 margin-top: 20px;
+                transition: opacity 0.2s;
+            }}
+            .btn-manage:hover {{
+                opacity: 0.9;
+            }}
+            .status-badge {{
+                display: inline-block;
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 12px;
+                background: #10b981;
+                color: white;
+                margin-left: 10px;
             }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🚀 NTX Binance Alpha Monitor</h1>
-                <p>实时监控币安 Alpha 新币上线</p>
+                <h1>
+                    🚀 NTX Binance Alpha Monitor
+                    <span class="status-badge">运行中</span>
+                </h1>
+                <p class="subtitle">实时监控币安 Alpha 新币上线 · 每 {interval_min} 分钟检查一次</p>
                 
                 <div class="stats">
                     <div class="stat-card">
@@ -386,8 +422,12 @@ def index():
                         <div class="stat-label">总代币数</div>
                     </div>
                     <div class="stat-card">
+                        <div class="stat-value">{new_count}</div>
+                        <div class="stat-label">本次新增</div>
+                    </div>
+                    <div class="stat-card">
                         <div class="stat-value">{len(tokens)}</div>
-                        <div class="stat-label">最新显示</div>
+                        <div class="stat-label">显示数量</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value">{check_time}</div>
@@ -402,14 +442,18 @@ def index():
     """
     
     for token in tokens:
+        contract = token.get('contractAddress', 'N/A')
+        if len(contract) > 20:
+            contract = contract[:10] + '...' + contract[-8:]
+        
         html += f"""
                 <div class="token-card">
                     <div class="token-symbol">{token.get('symbol', 'N/A')}</div>
                     <div class="token-name">{token.get('name', 'Unknown')}</div>
                     <div class="token-info">
-                        <div>🆔 {token.get('alphaId', 'N/A')}</div>
+                        <div>🆔 ID: {token.get('alphaId', 'N/A')}</div>
                         <div>⛓ Chain: {token.get('chainId', 'N/A')}</div>
-                        <div>📜 {token.get('contractAddress', 'N/A')[:16]}...</div>
+                        <div>📜 Contract: {contract}</div>
                     </div>
                 </div>
         """
@@ -417,6 +461,11 @@ def index():
     html += """
             </div>
         </div>
+        
+        <script>
+            // 自动刷新
+            setTimeout(() => location.reload(), 300000);  // 5分钟刷新
+        </script>
     </body>
     </html>
     """
@@ -515,6 +564,21 @@ def manage():
             
             <a href="/" class="btn">← 返回首页</a>
             <a href="/api/state" class="btn">📊 查看状态</a>
+            <a href="/api/check_now" class="btn">🔍 立即检查</a>
+            <a href="/api/test_push" class="btn">📤 测试推送</a>
+            
+            <script>
+                // 拦截测试推送点击
+                document.querySelectorAll('a[href="/api/test_push"], a[href="/api/check_now"]').forEach(btn => {{
+                    btn.addEventListener('click', async (e) => {{
+                        e.preventDefault();
+                        const url = e.target.getAttribute('href');
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        alert(data.message || JSON.stringify(data));
+                    }});
+                }});
+            </script>
         </div>
     </body>
     </html>
@@ -538,6 +602,45 @@ def api_config():
         if 'bot_token' in target:
             target['bot_token'] = target['bot_token'][:10] + '...'
     return jsonify(cfg)
+
+
+@app.route('/api/test_push')
+def api_test_push():
+    """API: 测试推送"""
+    try:
+        test_token = {
+            'name': '测试代币',
+            'symbol': 'TEST',
+            'alphaId': 'test-123',
+            'chainId': 'ETH',
+            'contractAddress': '0x1234567890abcdef'
+        }
+        notify_new_token(test_token)
+        return jsonify({"status": "success", "message": "测试推送已发送"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/check_now')
+def api_check_now():
+    """API: 立即检查"""
+    try:
+        current_tokens = fetch_alpha_tokens()
+        if not current_tokens:
+            return jsonify({"status": "error", "message": "无法获取代币数据"}), 500
+        
+        current_ids = {t.get('alphaId') for t in current_tokens}
+        previous_ids = {t.get('alphaId') for t in monitor_state.get('tokens', [])}
+        new_ids = current_ids - previous_ids
+        
+        return jsonify({
+            "status": "success",
+            "total": len(current_tokens),
+            "new": len(new_ids),
+            "message": f"检查完成: 总共 {len(current_tokens)} 个代币, 新增 {len(new_ids)} 个"
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # =============== 主程序 ===============
