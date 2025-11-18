@@ -193,7 +193,7 @@ def notify_new_token(token: dict):
                 target.get('chat_id'),
                 message
             )
-            time.sleep(1)  # 避免频率限制
+            time.sleep(2)  # 增加间隔,避免429频率限制
 
 
 # =============== 监控循环 ===============
